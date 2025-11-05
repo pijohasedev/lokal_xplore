@@ -1,0 +1,15 @@
+name: lokal_xplore
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_lints: ^3.0.0
+  google_maps_flutter: ^2.5.0
+  geolocator: ^10.1.0
+  permission_handler: ^11.0.1
+  material_symbols_icons: ^4.2785.1
+  shared_preferences: ^2.2.2
+
+environment:
+  sdk: '^3.9.0'
