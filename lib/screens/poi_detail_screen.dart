@@ -74,7 +74,7 @@ class _POIDetailScreenState extends State<POIDetailScreen> {
                 backgroundColor: Colors.white,
                 child: Icon(Symbols.arrow_back, color: Colors.black87),
               ),
-              onPressed: () => onNavigate('list', null),
+              onPressed: () => widget.onNavigate('list', null),
             ),
             actions: [
               IconButton(

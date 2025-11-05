@@ -6,6 +6,7 @@ import 'package:material_symbols_icons/material_symbols_icons.dart';
 
 import '../data/mock_pois.dart';
 import '../models/poi.dart';
+import '../services/favorites_service.dart'; // <-- IMPORT DITAMBAH DI SINI
 import '../widgets/bottom_nav.dart';
 import '../widgets/category_selector.dart';
 
@@ -469,11 +470,7 @@ class _MapScreenState extends State<MapScreen> {
                   onCategoryChange: _onCategoryChanged,
                 ),
 
-                // Category Selector
-                CategorySelector(
-                  selectedCategory: selectedCategory,
-                  onCategoryChange: _onCategoryChanged,
-                ),
+                // --- BLOK DUPLICATE TELAH DIPADAM ---
               ],
             ),
           ),
@@ -612,13 +609,7 @@ class _MapScreenState extends State<MapScreen> {
           });
           // TODO: Handle tab changes (Favorites, Profile)
           if (index == 1) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Favorites coming soon!')),
-            );
-          } else if (index == 2) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Profile coming soon!')),
-            );
+            widget.onNavigate('favorites', null);
           }
         },
       ),
@@ -679,6 +670,8 @@ class _MapScreenState extends State<MapScreen> {
                       },
                     ),
                   ),
+
+                  // Trending Badge (existing)
                   if (poi.rating >= 4.5)
                     Positioned(
                       top: 8,
@@ -712,6 +705,39 @@ class _MapScreenState extends State<MapScreen> {
                         ),
                       ),
                     ),
+
+                  // Favorite Badge (NEW!)
+                  FutureBuilder<bool>(
+                    future: FavoritesService.isFavorite(poi.id),
+                    builder: (context, snapshot) {
+                      if (snapshot.data == true) {
+                        return Positioned(
+                          top: 8,
+                          left: 8, // Left side!
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: Colors.red[600],
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.3),
+                                  blurRadius: 4,
+                                ),
+                              ],
+                            ),
+                            child: const Icon(
+                              Symbols.favorite,
+                              size: 12,
+                              color: Colors.white,
+                              fill: 1.0,
+                            ),
+                          ),
+                        );
+                      }
+                      return const SizedBox.shrink();
+                    },
+                  ),
                 ],
               ),
 

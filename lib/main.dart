@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import 'models/poi.dart';
+import 'screens/favorites_screen.dart';
 import 'screens/map_screen.dart';
 import 'screens/poi_detail_screen.dart';
 import 'screens/poi_list_screen.dart';
@@ -68,6 +69,8 @@ class _AppNavigatorState extends State<AppNavigator> {
         }
         // Fallback to map if no POI selected
         return MapScreen(onNavigate: handleNavigate);
+      case 'favorites': // ← ADD THIS CASE
+        return FavoritesScreen(onNavigate: handleNavigate);
       default:
         return MapScreen(onNavigate: handleNavigate);
     }
