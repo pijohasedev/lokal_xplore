@@ -6,9 +6,11 @@ import 'package:material_symbols_icons/material_symbols_icons.dart';
 
 import '../data/mock_pois.dart';
 import '../models/poi.dart';
-import '../services/favorites_service.dart'; // <-- IMPORT DITAMBAH DI SINI
+import '../services/favorites_service.dart';
+import '../utils/distance_calculator.dart'; // ← ADD THIS
 import '../widgets/bottom_nav.dart';
 import '../widgets/category_selector.dart';
+import '../widgets/poi_image.dart'; // ← ADD THIS
 
 class MapScreen extends StatefulWidget {
   final Function(String, POI?) onNavigate;
@@ -24,32 +26,39 @@ class _MapScreenState extends State<MapScreen> {
   Category? selectedCategory;
   int activeNavIndex = 0;
   Set<Marker> markers = {};
+  String searchQuery = '';
+  TextEditingController searchController = TextEditingController();
+  LatLng currentMapCenter = const LatLng(3.1570, 101.7118);
+  List<POI> nearbyPOIs = [];
 
-  String searchQuery = ''; // ← NEW
-  TextEditingController searchController = TextEditingController(); // ← NEW
-
-  // Default location (KL City Centre)
   static const CameraPosition _initialPosition = CameraPosition(
-    target: LatLng(3.1570, 101.7118), // KLCC coordinates
+    target: LatLng(3.1570, 101.7118),
     zoom: 13.5,
   );
 
   @override
   void initState() {
     super.initState();
+    _updateNearbyPOIs();
     _createMarkers();
   }
 
-  // Filter POIs based on category AND search
+  void _updateNearbyPOIs() {
+    setState(() {
+      nearbyPOIs = DistanceCalculator.sortPOIsByDistance(
+        filteredPOIs,
+        currentMapCenter,
+      );
+    });
+  }
+
   List<POI> get filteredPOIs {
     var pois = mockPOIs;
 
-    // Filter by category
     if (selectedCategory != null) {
       pois = pois.where((poi) => poi.category == selectedCategory).toList();
     }
 
-    // Filter by search query
     if (searchQuery.isNotEmpty) {
       pois = pois.where((poi) {
         return poi.name.toLowerCase().contains(searchQuery.toLowerCase()) ||
@@ -60,10 +69,12 @@ class _MapScreenState extends State<MapScreen> {
       }).toList();
     }
 
+    pois = DistanceCalculator.updatePOIDistances(pois, currentMapCenter);
+    pois = DistanceCalculator.sortPOIsByDistance(pois, currentMapCenter);
+
     return pois;
   }
 
-  // Create markers for POIs
   void _createMarkers() {
     final newMarkers = <Marker>{};
 
@@ -74,12 +85,16 @@ class _MapScreenState extends State<MapScreen> {
           position: LatLng(poi.lat, poi.lng),
           infoWindow: InfoWindow(
             title: poi.name,
-            snippet: '${poi.rating} ⭐ • ${poi.distance}',
+            snippet: '⭐ ${poi.rating} • ${poi.distance}\nTap to view details',
             onTap: () => widget.onNavigate('detail', poi),
           ),
           icon: BitmapDescriptor.defaultMarkerWithHue(
             _getMarkerColor(poi.category),
           ),
+          consumeTapEvents: true,
+          onTap: () {
+            _showPOIBottomSheet(poi);
+          },
         ),
       );
     }
@@ -89,7 +104,6 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
-  // Get marker color based on category
   double _getMarkerColor(Category category) {
     switch (category) {
       case Category.food:
@@ -107,18 +121,30 @@ class _MapScreenState extends State<MapScreen> {
     _mapController = controller;
   }
 
+  void _onCameraMove(CameraPosition position) {
+    setState(() {
+      currentMapCenter = position.target;
+    });
+  }
+
+  void _onCameraIdle() {
+    _updateNearbyPOIs();
+    _createMarkers();
+  }
+
   void _onCategoryChanged(Category? category) {
     setState(() {
       selectedCategory = category;
     });
+    _updateNearbyPOIs();
     _createMarkers();
   }
 
-  // ADD THESE TWO METHODS HERE (SEPARATE, NOT INSIDE OTHER METHOD)
   void _onSearchChanged(String query) {
     setState(() {
       searchQuery = query;
     });
+    _updateNearbyPOIs();
     _createMarkers();
   }
 
@@ -127,28 +153,219 @@ class _MapScreenState extends State<MapScreen> {
       searchQuery = '';
       searchController.clear();
     });
+    _updateNearbyPOIs();
     _createMarkers();
     FocusScope.of(context).unfocus();
   }
 
-  // THEN _onNearMePressed (WITHOUT nested methods inside)
-  void _onNearMePressed() {
-    _mapController?.animateCamera(
-      CameraUpdate.newCameraPosition(_initialPosition),
-    );
+  void _onNearMePressed() async {
+    try {
+      _mapController?.animateCamera(
+        CameraUpdate.newCameraPosition(
+          const CameraPosition(
+            target: LatLng(3.1570, 101.7118),
+            zoom: 14.0,
+            tilt: 45.0,
+          ),
+        ),
+      );
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Symbols.location_searching, color: Colors.white, size: 20),
+              SizedBox(width: 12),
+              Text('Centering map...'),
+            ],
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not get location'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _showPOIBottomSheet(POI poi) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Symbols.location_searching, color: Colors.white, size: 20),
-            SizedBox(width: 12),
-            Text('Finding places near you...'),
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                POIImage(
+                  imageUrl: poi.image,
+                  width: 80,
+                  height: 80,
+                  fit: BoxFit.cover,
+                  category: poi.category,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        poi.name,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(
+                            Symbols.star,
+                            size: 16,
+                            color: Colors.amber[600],
+                            fill: 1.0,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${poi.rating}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            poi.distance,
+                            style: TextStyle(color: Colors.grey[600]),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.blue[50],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          poi.category.displayName,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.blue[700],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                    },
+                    icon: Icon(Symbols.navigation, color: Colors.blue[600]),
+                    label: const Text('Directions'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      side: BorderSide(color: Colors.blue[600]!),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      widget.onNavigate('detail', poi);
+                    },
+                    icon: const Icon(Symbols.info, color: Colors.white),
+                    label: const Text('Details'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue[600],
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
-        duration: Duration(seconds: 2),
       ),
     );
+  }
+
+  String _getActiveFilterText() {
+    List<String> filters = [];
+
+    if (selectedCategory != null) {
+      filters.add(selectedCategory!.displayName);
+    }
+
+    if (searchQuery.isNotEmpty) {
+      filters.add('"$searchQuery"');
+    }
+
+    if (filters.isEmpty) return 'Active filters';
+
+    return 'Filtered by: ${filters.join(' • ')}';
+  }
+
+  IconData _getCategoryIcon(Category category) {
+    switch (category) {
+      case Category.food:
+        return Symbols.restaurant;
+      case Category.attractions:
+        return Symbols.location_city;
+      case Category.shopping:
+        return Symbols.shopping_cart;
+      case Category.petrolStations:
+        return Symbols.local_gas_station;
+    }
+  }
+
+  Color _getRankColor(int index) {
+    switch (index) {
+      case 0:
+        return Colors.green[600]!;
+      case 1:
+        return Colors.blue[600]!;
+      case 2:
+        return Colors.orange[600]!;
+      default:
+        return Colors.grey[600]!;
+    }
   }
 
   @override
@@ -156,70 +373,20 @@ class _MapScreenState extends State<MapScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          // Google Map
-          Container(
-            color: Colors.grey[200],
-            child: Stack(
-              children: [
-                // Grid pattern
-                CustomPaint(size: Size.infinite, painter: GridPainter()),
-                // Center message
-                Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.map, size: 80, color: Colors.grey[400]),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Map View',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '${filteredPOIs.length} places nearby',
-                        style: TextStyle(fontSize: 16, color: Colors.grey[500]),
-                      ),
-                    ],
-                  ),
-                ),
-                // Mock POI markers
-                ...filteredPOIs.asMap().entries.map((entry) {
-                  final index = entry.key;
-                  final poi = entry.value;
-                  final positions = [
-                    Offset(0.3, 0.25),
-                    Offset(0.6, 0.35),
-                    Offset(0.25, 0.5),
-                    Offset(0.7, 0.45),
-                    Offset(0.4, 0.65),
-                    Offset(0.8, 0.3),
-                    Offset(0.65, 0.7),
-                    Offset(0.5, 0.55),
-                  ];
-                  final position = positions[index % positions.length];
-
-                  return Positioned(
-                    left: MediaQuery.of(context).size.width * position.dx,
-                    top: MediaQuery.of(context).size.height * position.dy,
-                    child: GestureDetector(
-                      onTap: () => widget.onNavigate('detail', poi),
-                      child: Icon(
-                        Symbols.explore,
-                        size: 40,
-                        color: Colors.red[600],
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ],
-            ),
+          GoogleMap(
+            onMapCreated: _onMapCreated,
+            initialCameraPosition: _initialPosition,
+            markers: markers,
+            myLocationEnabled: true,
+            myLocationButtonEnabled: false,
+            zoomControlsEnabled: false,
+            mapToolbarEnabled: false,
+            compassEnabled: true,
+            mapType: MapType.normal,
+            onCameraMove: _onCameraMove,
+            onCameraIdle: _onCameraIdle,
+            padding: const EdgeInsets.only(top: 400, bottom: 100),
           ),
-
-          // Top Gradient Overlay
           Positioned(
             top: 0,
             left: 0,
@@ -239,12 +406,9 @@ class _MapScreenState extends State<MapScreen> {
               ),
             ),
           ),
-
-          // Header
           SafeArea(
             child: Column(
               children: [
-                // App Title & Counter
                 Padding(
                   padding: const EdgeInsets.all(16),
                   child: Row(
@@ -278,7 +442,6 @@ class _MapScreenState extends State<MapScreen> {
                           ),
                           const SizedBox(width: 12),
                           Column(
-                            mainAxisSize: MainAxisSize.min,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Text(
@@ -314,9 +477,10 @@ class _MapScreenState extends State<MapScreen> {
                         child: Row(
                           children: [
                             const Icon(
-                              Symbols.star_shine,
+                              Symbols.location_on,
                               color: Colors.white,
                               size: 16,
+                              fill: 1.0,
                             ),
                             const SizedBox(width: 6),
                             Text(
@@ -333,8 +497,6 @@ class _MapScreenState extends State<MapScreen> {
                     ],
                   ),
                 ),
-
-                // Search Bar
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Container(
@@ -350,8 +512,8 @@ class _MapScreenState extends State<MapScreen> {
                       ],
                     ),
                     child: TextField(
-                      controller: searchController, // ← ADD CONTROLLER
-                      onChanged: _onSearchChanged, // ← ADD CALLBACK
+                      controller: searchController,
+                      onChanged: _onSearchChanged,
                       decoration: InputDecoration(
                         hintText: 'Search restaurants, attractions...',
                         hintStyle: TextStyle(color: Colors.grey[400]),
@@ -359,9 +521,7 @@ class _MapScreenState extends State<MapScreen> {
                           Symbols.search,
                           color: Colors.blue[600],
                         ),
-                        suffixIcon:
-                            searchQuery
-                                .isNotEmpty // ← SHOW X BUTTON WHEN TYPING
+                        suffixIcon: searchQuery.isNotEmpty
                             ? IconButton(
                                 icon: Icon(
                                   Symbols.close,
@@ -397,10 +557,6 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-
-                const SizedBox(height: 12),
-
-                // Active Filters Indicator (NEW!)
                 if (searchQuery.isNotEmpty || selectedCategory != null)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -441,6 +597,7 @@ class _MapScreenState extends State<MapScreen> {
                                 searchQuery = '';
                                 searchController.clear();
                               });
+                              _updateNearbyPOIs();
                               _createMarkers();
                               FocusScope.of(context).unfocus();
                             },
@@ -461,21 +618,14 @@ class _MapScreenState extends State<MapScreen> {
                       ),
                     ),
                   ),
-
                 const SizedBox(height: 12),
-
-                // Category Selector (existing)
                 CategorySelector(
                   selectedCategory: selectedCategory,
                   onCategoryChange: _onCategoryChanged,
                 ),
-
-                // --- BLOK DUPLICATE TELAH DIPADAM ---
               ],
             ),
           ),
-
-          // Trending Places Cards (Horizontal scroll)
           Positioned(
             top: MediaQuery.of(context).padding.top + 220,
             left: 0,
@@ -485,16 +635,14 @@ class _MapScreenState extends State<MapScreen> {
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: filteredPOIs.take(3).length,
+                itemCount: nearbyPOIs.take(3).length,
                 itemBuilder: (context, index) {
-                  final poi = filteredPOIs[index];
-                  return _buildTrendingCard(poi);
+                  final poi = nearbyPOIs[index];
+                  return _buildTrendingCard(poi, index);
                 },
               ),
             ),
           ),
-
-          // No Results Message
           if (filteredPOIs.isEmpty)
             Positioned.fill(
               child: Center(
@@ -545,6 +693,7 @@ class _MapScreenState extends State<MapScreen> {
                             searchQuery = '';
                             searchController.clear();
                           });
+                          _updateNearbyPOIs();
                           _createMarkers();
                           FocusScope.of(context).unfocus();
                         },
@@ -567,21 +716,21 @@ class _MapScreenState extends State<MapScreen> {
                 ),
               ),
             ),
-
-          // Floating Action Buttons
           Positioned(
             bottom: 100,
             right: 16,
             child: Column(
               children: [
-                // Near Me Button
                 FloatingActionButton(
                   onPressed: _onNearMePressed,
                   backgroundColor: Colors.blue[600],
-                  child: const Icon(Symbols.my_location, color: Colors.white),
+                  child: const Icon(
+                    Symbols.my_location,
+                    color: Colors.white,
+                    fill: 1.0,
+                  ),
                 ),
                 const SizedBox(height: 12),
-                // List View Button
                 FloatingActionButton.extended(
                   onPressed: () => widget.onNavigate('list', null),
                   backgroundColor: Colors.white,
@@ -599,40 +748,25 @@ class _MapScreenState extends State<MapScreen> {
           ),
         ],
       ),
-
-      // Bottom Navigation
       bottomNavigationBar: BottomNav(
         activeIndex: activeNavIndex,
         onTabChange: (index) {
           setState(() {
             activeNavIndex = index;
           });
-          // TODO: Handle tab changes (Favorites, Profile)
           if (index == 1) {
             widget.onNavigate('favorites', null);
+          } else if (index == 2) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Profile coming soon!')),
+            );
           }
         },
       ),
     );
   }
 
-  String _getActiveFilterText() {
-    List<String> filters = [];
-
-    if (selectedCategory != null) {
-      filters.add(selectedCategory!.displayName);
-    }
-
-    if (searchQuery.isNotEmpty) {
-      filters.add('"$searchQuery"');
-    }
-
-    if (filters.isEmpty) return 'Active filters';
-
-    return 'Filtered by: ${filters.join(' • ')}';
-  }
-
-  Widget _buildTrendingCard(POI poi) {
+  Widget _buildTrendingCard(POI poi, int index) {
     return Container(
       width: 180,
       margin: const EdgeInsets.only(right: 12),
@@ -643,35 +777,61 @@ class _MapScreenState extends State<MapScreen> {
           onTap: () => widget.onNavigate('detail', poi),
           borderRadius: BorderRadius.circular(16),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Image
               Stack(
                 children: [
-                  ClipRRect(
+                  POIImage(
+                    imageUrl: poi.image,
+                    width: double.infinity,
+                    height: 90,
+                    fit: BoxFit.cover,
+                    category: poi.category,
                     borderRadius: const BorderRadius.vertical(
                       top: Radius.circular(16),
                     ),
-                    child: Image.network(
-                      poi.image,
-                      height: 90,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          height: 90,
-                          color: Colors.grey[300],
-                          child: Icon(
-                            _getCategoryIcon(poi.category),
-                            size: 40,
-                            color: Colors.grey[600],
+                  ),
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _getRankColor(index),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 4,
                           ),
-                        );
-                      },
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Symbols.location_on,
+                            color: Colors.white,
+                            size: 14,
+                            fill: 1.0,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '#${index + 1} Nearest',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-
-                  // Trending Badge (existing)
                   if (poi.rating >= 4.5)
                     Positioned(
                       top: 8,
@@ -685,17 +845,18 @@ class _MapScreenState extends State<MapScreen> {
                           color: Colors.amber[600],
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: const Row(
+                        child: Row(
                           children: [
-                            Icon(
-                              Icons.trending_up,
+                            const Icon(
+                              Symbols.star,
                               color: Colors.white,
                               size: 12,
+                              fill: 1.0,
                             ),
-                            SizedBox(width: 4),
+                            const SizedBox(width: 4),
                             Text(
-                              'Trending',
-                              style: TextStyle(
+                              '${poi.rating}',
+                              style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold,
@@ -705,15 +866,13 @@ class _MapScreenState extends State<MapScreen> {
                         ),
                       ),
                     ),
-
-                  // Favorite Badge (NEW!)
                   FutureBuilder<bool>(
                     future: FavoritesService.isFavorite(poi.id),
                     builder: (context, snapshot) {
                       if (snapshot.data == true) {
                         return Positioned(
-                          top: 8,
-                          left: 8, // Left side!
+                          bottom: 8,
+                          right: 8,
                           child: Container(
                             padding: const EdgeInsets.all(6),
                             decoration: BoxDecoration(
@@ -740,8 +899,6 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 ],
               ),
-
-              // Info
               Padding(
                 padding: const EdgeInsets.all(8),
                 child: Column(
@@ -766,6 +923,7 @@ class _MapScreenState extends State<MapScreen> {
                               Symbols.star,
                               color: Colors.amber[600],
                               size: 14,
+                              fill: 1.0,
                             ),
                             const SizedBox(width: 4),
                             Text(
@@ -777,12 +935,23 @@ class _MapScreenState extends State<MapScreen> {
                             ),
                           ],
                         ),
-                        Text(
-                          poi.distance,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                          ),
+                        Row(
+                          children: [
+                            Icon(
+                              Symbols.navigation,
+                              size: 12,
+                              color: Colors.blue[600],
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              poi.distance,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.blue[600],
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -796,46 +965,10 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  IconData _getCategoryIcon(Category category) {
-    switch (category) {
-      case Category.food:
-        return Symbols.restaurant;
-      case Category.attractions:
-        return Symbols.attractions;
-      case Category.shopping:
-        return Symbols.shopping_bag;
-      case Category.petrolStations:
-        return Symbols.local_gas_station;
-    }
-  }
-
   @override
   void dispose() {
     _mapController?.dispose();
     searchController.dispose();
     super.dispose();
   }
-}
-
-// Grid Painter for map background
-class GridPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.grey[300]!
-      ..strokeWidth = 1.0;
-
-    // Draw vertical lines
-    for (double i = 0; i < size.width; i += 50) {
-      canvas.drawLine(Offset(i, 0), Offset(i, size.height), paint);
-    }
-
-    // Draw horizontal lines
-    for (double i = 0; i < size.height; i += 50) {
-      canvas.drawLine(Offset(0, i), Offset(size.width, i), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
